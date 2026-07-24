@@ -12,6 +12,9 @@ import 'workout_summary.dart';
 
 late List<CameraDescription> _cameras;
 
+// Pass with: flutter run --dart-define=ANTHROPIC_API_KEY=sk-ant-...
+const _anthropicApiKey = String.fromEnvironment('ANTHROPIC_API_KEY');
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   _cameras = await availableCameras();
@@ -50,7 +53,9 @@ class _PoseCameraScreenState extends State<PoseCameraScreen>
   final PoseDetector _poseDetector = PoseDetector(
     options: PoseDetectorOptions(mode: PoseDetectionMode.stream),
   );
-  final CoachingService _coachingService = MockCoachingService();
+  final CoachingService _coachingService = _anthropicApiKey.isEmpty
+      ? MockCoachingService()
+      : ClaudeCoachingService(apiKey: _anthropicApiKey);
 
   CameraController? _controller;
   int _cameraIndex = 0;
@@ -507,6 +512,12 @@ class _SummarySheetState extends State<_SummarySheet> {
             FutureBuilder<String>(
               future: _adviceFuture,
               builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return Text(
+                    '建議產生失敗: ${snapshot.error}',
+                    style: const TextStyle(color: Colors.redAccent, fontSize: 14),
+                  );
+                }
                 if (!snapshot.hasData) {
                   return const Padding(
                     padding: EdgeInsets.symmetric(vertical: 24),
