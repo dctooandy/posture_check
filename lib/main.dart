@@ -408,35 +408,57 @@ class _FeedbackBanner extends StatelessWidget {
     final color = _colors[feedback.status]!;
     final angle = feedback.angle;
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeOut,
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.85),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 200),
-            child: Text(
-              _messages[feedback.status]!,
-              key: ValueKey(feedback.status),
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
+    // A fixed max height so this banner can never grow into a screen-filling
+    // card, regardless of how AnimatedSwitcher's transition entries stack up
+    // if the underlying status flickers faster than its transition duration
+    // (e.g. a person repeatedly leaving/re-entering frame). 140 leaves
+    // headroom above the ~65px two CJK text lines + padding actually need,
+    // since CJK line-height metrics run taller than Latin text at the same
+    // font size, and system font-scale settings add further slack.
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 140),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
+        clipBehavior: Clip.hardEdge,
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.85),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 200),
+              // Outgoing text disappears instantly instead of fading out.
+              // Without this, a burst of rapid status changes (e.g. angle
+              // sweeping through multiple thresholds as someone raises their
+              // arms) can leave several outgoing entries alive at once,
+              // which is what was overflowing the banner's height cap.
+              reverseDuration: Duration.zero,
+              child: Text(
+                _messages[feedback.status]!,
+                key: ValueKey(feedback.status),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
-          ),
-          if (angle != null)
-            Text(
-              '關節角度: ${angle.toStringAsFixed(0)}°',
-              style: const TextStyle(color: Colors.white70, fontSize: 14),
-            ),
-        ],
+            if (angle != null)
+              Text(
+                '關節角度: ${angle.toStringAsFixed(0)}°',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+          ],
+        ),
       ),
     );
   }

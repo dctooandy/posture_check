@@ -107,8 +107,11 @@ class SquatAnalyzer extends ExerciseAnalyzer {
   String get displayName => '深蹲';
   @override
   double get restThreshold => 160;
+  // Deliberately above goodRangeMax: a rep that dips into the down phase
+  // but never gets past this without reaching goodRangeMax still completes
+  // and gets classified tooShallow, rather than silently not counting.
   @override
-  double get downThreshold => 100;
+  double get downThreshold => 115;
   @override
   double get upThreshold => 150;
   @override
@@ -141,8 +144,10 @@ class PushUpAnalyzer extends ExerciseAnalyzer {
   String get displayName => '伏地挺身';
   @override
   double get restThreshold => 160;
+  // See SquatAnalyzer.downThreshold: kept above goodRangeMax so a shallow
+  // push-up still completes as a counted (tooShallow) rep.
   @override
-  double get downThreshold => 110;
+  double get downThreshold => 130;
   @override
   double get upThreshold => 150;
   @override
@@ -247,26 +252,43 @@ class ExerciseFeedbackEngine {
 /// Exponential moving average over the per-frame angle reading. ML Kit's
 /// landmark coordinates carry frame-to-frame noise even when the person
 /// holds still, which otherwise shows up as a jittery angle number and can
-/// nudge [RepCounter] across a threshold on a single noisy frame. A missing
-/// reading (no confident pose) resets the average rather than holding a
-/// stale value, since that noise source is coordinate jitter, not dropouts.
+/// nudge [RepCounter] across a threshold on a single noisy frame.
+///
+/// A missing reading (no confident pose) doesn't reset the average
+/// immediately: a person briefly stepping out of frame, or ML Kit dropping a
+/// single frame, shouldn't flash the live feedback banner to "no pose
+/// detected" and back. Up to [missedFrameTolerance] consecutive misses hold
+/// the last known value instead; only a longer gap resets to null, so a
+/// genuinely absent person is still reported correctly.
 class AngleSmoother {
-  AngleSmoother({this.alpha = 0.4});
+  AngleSmoother({this.alpha = 0.4, this.missedFrameTolerance = 5});
 
   final double alpha;
+  final int missedFrameTolerance;
+
   double? _value;
+  int _missedFrames = 0;
 
   double? smooth(double? raw) {
     if (raw == null) {
-      _value = null;
-      return null;
+      _missedFrames++;
+      if (_missedFrames > missedFrameTolerance) {
+        _value = null;
+        return null;
+      }
+      return _value;
     }
+
+    _missedFrames = 0;
     final previous = _value;
     _value = previous == null ? raw : alpha * raw + (1 - alpha) * previous;
     return _value;
   }
 
-  void reset() => _value = null;
+  void reset() {
+    _value = null;
+    _missedFrames = 0;
+  }
 }
 
 /// Counts reps from the angle stream using a two-threshold state machine.
