@@ -38,6 +38,11 @@ abstract class ExerciseAnalyzer {
   ExerciseType get type;
   String get displayName;
 
+  /// How to position the camera for this exercise. Some exercises need a
+  /// front-on view (squat), others need a side-on view (elbow bend isn't
+  /// readable head-on) — shown to the user when they pick the exercise.
+  String get cameraGuidance;
+
   /// Angle at/above which the limb is considered back at the rest position
   /// (e.g. standing tall, arms extended).
   double get restThreshold;
@@ -106,6 +111,8 @@ class SquatAnalyzer extends ExerciseAnalyzer {
   @override
   String get displayName => '深蹲';
   @override
+  String get cameraGuidance => '請將手機正面對著你,確保全身(頭到腳)都在畫面裡。';
+  @override
   double get restThreshold => 160;
   // Deliberately above goodRangeMax: a rep that dips into the down phase
   // but never gets past this without reaching goodRangeMax still completes
@@ -142,6 +149,8 @@ class PushUpAnalyzer extends ExerciseAnalyzer {
   ExerciseType get type => ExerciseType.pushUp;
   @override
   String get displayName => '伏地挺身';
+  @override
+  String get cameraGuidance => '請將手機立在身體「側邊」、與腰部同高,手肘彎曲角度側面拍才準。';
   @override
   double get restThreshold => 160;
   // See SquatAnalyzer.downThreshold: kept above goodRangeMax so a shallow
@@ -185,6 +194,8 @@ class BicepCurlAnalyzer extends ExerciseAnalyzer {
   ExerciseType get type => ExerciseType.bicepCurl;
   @override
   String get displayName => '啞鈴彎舉';
+  @override
+  String get cameraGuidance => '請將手機立在身體「側邊」、與腰部同高,手肘彎曲角度側面拍才準。';
   @override
   double get restThreshold => 150;
   @override

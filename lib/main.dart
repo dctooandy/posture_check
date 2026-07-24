@@ -17,8 +17,34 @@ const _anthropicApiKey = String.fromEnvironment('ANTHROPIC_API_KEY');
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  _cameras = await availableCameras();
+  _cameras = _selectPrimaryCameras(await availableCameras());
   runApp(const PostureCheckApp());
+}
+
+/// Some phones (multi-lens iPhones especially) report each physical back
+/// lens — wide, ultra-wide, telephoto — as a separate [CameraDescription].
+/// Only one front and one back camera are useful for pose detection (a
+/// wide-angle back lens is the one that actually fits a full body in
+/// frame), so collapse the list to at most those two before the switch
+/// button cycles through it.
+List<CameraDescription> _selectPrimaryCameras(List<CameraDescription> all) {
+  CameraDescription? front;
+  CameraDescription? back;
+  var backIsWide = false;
+
+  for (final camera in all) {
+    if (camera.lensDirection == CameraLensDirection.front) {
+      front ??= camera;
+    } else if (camera.lensDirection == CameraLensDirection.back) {
+      final isWide = camera.lensType == CameraLensType.wide;
+      if (back == null || (!backIsWide && isWide)) {
+        back = camera;
+        backIsWide = isWide;
+      }
+    }
+  }
+
+  return [?front, ?back];
 }
 
 class PostureCheckApp extends StatelessWidget {
@@ -60,6 +86,7 @@ class _PoseCameraScreenState extends State<PoseCameraScreen>
   CameraController? _controller;
   int _cameraIndex = 0;
   bool _isBusy = false;
+  bool _isStartingCamera = false;
   List<Pose> _poses = [];
   Size? _imageSize;
   InputImageRotation _imageRotation = InputImageRotation.rotation0deg;
@@ -79,38 +106,68 @@ class _PoseCameraScreenState extends State<PoseCameraScreen>
         _cameras.indexWhere((c) => c.lensDirection == CameraLensDirection.front);
     if (_cameraIndex == -1) _cameraIndex = 0;
     _startCamera();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _showCameraGuidance());
   }
 
+  /// Builds a fresh [CameraController]. Guarded against re-entrancy: iOS can
+  /// fire an `inactive`→`resumed` lifecycle cycle within the first frame or
+  /// two of a cold launch (e.g. while the camera permission dialog is up),
+  /// which would otherwise race a second call against the one already
+  /// in-flight from [initState] and leave `_controller` pointing at whichever
+  /// instance loses the race — a controller that's live internally but
+  /// orphaned from the field, or (worse) one disposed via [_switchCamera]
+  /// while a rebuild in between still renders the old reference. A disposed
+  /// controller's `value.isInitialized` stays true (the camera package
+  /// doesn't reset it on dispose), so a plain `isInitialized` check in
+  /// `build()` can't catch that case — hence the flag here instead.
   Future<void> _startCamera() async {
-    final camera = _cameras[_cameraIndex];
-    final controller = CameraController(
-      camera,
-      ResolutionPreset.medium,
-      enableAudio: false,
-      imageFormatGroup:
-          Platform.isAndroid ? ImageFormatGroup.nv21 : ImageFormatGroup.bgra8888,
-    );
-    _controller = controller;
-
+    if (_isStartingCamera) return;
+    _isStartingCamera = true;
     try {
-      await controller.initialize();
-      if (!mounted) return;
-      await controller.startImageStream(_processImage);
-      setState(() => _error = null);
-    } catch (e) {
-      setState(() => _error = '相機初始化失敗: $e');
+      final camera = _cameras[_cameraIndex];
+      final controller = CameraController(
+        camera,
+        ResolutionPreset.medium,
+        enableAudio: false,
+        imageFormatGroup:
+            Platform.isAndroid ? ImageFormatGroup.nv21 : ImageFormatGroup.bgra8888,
+      );
+      _controller = controller;
+
+      try {
+        await controller.initialize();
+        if (!mounted) return;
+        await controller.startImageStream(_processImage);
+        if (mounted) setState(() => _error = null);
+      } catch (e) {
+        if (mounted) setState(() => _error = '相機初始化失敗: $e');
+      }
+    } finally {
+      _isStartingCamera = false;
     }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // A start/switch is already replacing _controller — let it finish
+    // rather than reacting to a stale reference mid-swap.
+    if (_isStartingCamera) return;
+
     final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) return;
+    if (controller == null) return;
 
     if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
-      controller.stopImageStream();
+      if (controller.value.isInitialized && controller.value.isStreamingImages) {
+        controller.stopImageStream();
+      }
     } else if (state == AppLifecycleState.resumed) {
-      _startCamera();
+      if (controller.value.isInitialized) {
+        if (!controller.value.isStreamingImages) {
+          controller.startImageStream(_processImage);
+        }
+      } else {
+        _startCamera();
+      }
     }
   }
 
@@ -188,6 +245,20 @@ class _PoseCameraScreenState extends State<PoseCameraScreen>
       _angleSmoother.reset();
       _feedback = const ExerciseFeedback(status: LiveFeedbackStatus.noPoseDetected);
     });
+    _showCameraGuidance();
+  }
+
+  void _showCameraGuidance() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('${_analyzer.displayName}:${_analyzer.cameraGuidance}'),
+          duration: const Duration(seconds: 4),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 
   void _showWorkoutSummary() {
@@ -210,11 +281,20 @@ class _PoseCameraScreenState extends State<PoseCameraScreen>
 
   Future<void> _switchCamera() async {
     if (_cameras.length < 2) return;
-    await _controller?.stopImageStream();
-    await _controller?.dispose();
+    final oldController = _controller;
+    // Clear the field (and rebuild) before disposing, so a rebuild landing
+    // in the gap between dispose() and _startCamera() assigning a fresh
+    // controller can never render the disposed instance — dispose() doesn't
+    // reset value.isInitialized, so build()'s isInitialized check alone
+    // can't tell a disposed controller from a live one.
+    setState(() {
+      _controller = null;
+      _imageSize = null;
+      _poses = [];
+    });
+    await oldController?.stopImageStream();
+    await oldController?.dispose();
     _cameraIndex = (_cameraIndex + 1) % _cameras.length;
-    _imageSize = null;
-    _poses = [];
     await _startCamera();
   }
 
@@ -277,6 +357,14 @@ class _PoseCameraScreenState extends State<PoseCameraScreen>
             right: 16,
             child: Column(
               children: [
+                FloatingActionButton(
+                  heroTag: 'camera_guidance',
+                  tooltip: '鏡頭擺放提示',
+                  backgroundColor: Colors.black54,
+                  onPressed: _showCameraGuidance,
+                  child: const Icon(Icons.info_outline),
+                ),
+                const SizedBox(height: 12),
                 FloatingActionButton(
                   heroTag: 'switch_camera',
                   tooltip: '切換鏡頭',
