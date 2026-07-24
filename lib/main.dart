@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:camera/camera.dart';
@@ -8,6 +9,8 @@ import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'coaching_service.dart';
 import 'exercise_analyzer.dart';
 import 'pose_painter.dart';
+import 'workout_history_screen.dart';
+import 'workout_history_service.dart';
 import 'workout_summary.dart';
 
 late List<CameraDescription> _cameras;
@@ -82,6 +85,7 @@ class _PoseCameraScreenState extends State<PoseCameraScreen>
   final CoachingService _coachingService = _anthropicApiKey.isEmpty
       ? MockCoachingService()
       : ClaudeCoachingService(apiKey: _anthropicApiKey);
+  final WorkoutHistoryService _historyService = WorkoutHistoryService();
 
   CameraController? _controller;
   int _cameraIndex = 0;
@@ -264,6 +268,11 @@ class _PoseCameraScreenState extends State<PoseCameraScreen>
   void _showWorkoutSummary() {
     final summary =
         WorkoutSummary.fromReps(_analyzer.displayName, _repCounter.completedReps);
+    // Fetched once and shared: the sheet's FutureBuilder and the history
+    // save below both await this same Future, so the advice call only ever
+    // hits the API once per summary.
+    final adviceFuture = _coachingService.getAdvice(summary);
+    unawaited(_saveHistoryEntry(summary, adviceFuture));
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1C1C1E),
@@ -274,9 +283,26 @@ class _PoseCameraScreenState extends State<PoseCameraScreen>
       ),
       builder: (context) => _SummarySheet(
         summary: summary,
-        coachingService: _coachingService,
+        adviceFuture: adviceFuture,
       ),
     );
+  }
+
+  Future<void> _saveHistoryEntry(
+    WorkoutSummary summary,
+    Future<String> adviceFuture,
+  ) async {
+    String? advice;
+    try {
+      advice = await adviceFuture;
+    } catch (_) {
+      advice = null;
+    }
+    await _historyService.save(WorkoutHistoryEntry(
+      summary: summary,
+      completedAt: DateTime.now(),
+      advice: advice,
+    ));
   }
 
   Future<void> _switchCamera() async {
@@ -399,6 +425,19 @@ class _PoseCameraScreenState extends State<PoseCameraScreen>
                   backgroundColor: Colors.deepPurple,
                   onPressed: _repCounter.reps > 0 ? _showWorkoutSummary : null,
                   child: const Icon(Icons.assessment),
+                ),
+                const SizedBox(height: 12),
+                FloatingActionButton(
+                  heroTag: 'workout_history',
+                  tooltip: '訓練歷史',
+                  backgroundColor: Colors.black54,
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          WorkoutHistoryScreen(historyService: _historyService),
+                    ),
+                  ),
+                  child: const Icon(Icons.history),
                 ),
               ],
             ),
@@ -570,24 +609,14 @@ class _FeedbackBanner extends StatelessWidget {
   }
 }
 
-class _SummarySheet extends StatefulWidget {
-  const _SummarySheet({required this.summary, required this.coachingService});
+class _SummarySheet extends StatelessWidget {
+  const _SummarySheet({required this.summary, required this.adviceFuture});
 
   final WorkoutSummary summary;
-  final CoachingService coachingService;
-
-  @override
-  State<_SummarySheet> createState() => _SummarySheetState();
-}
-
-class _SummarySheetState extends State<_SummarySheet> {
-  late final Future<String> _adviceFuture =
-      widget.coachingService.getAdvice(widget.summary);
+  final Future<String> adviceFuture;
 
   @override
   Widget build(BuildContext context) {
-    final summary = widget.summary;
-
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
@@ -611,7 +640,7 @@ class _SummarySheetState extends State<_SummarySheet> {
             ),
             const SizedBox(height: 16),
             FutureBuilder<String>(
-              future: _adviceFuture,
+              future: adviceFuture,
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
                   return Text(

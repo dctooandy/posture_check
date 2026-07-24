@@ -46,5 +46,25 @@ void main() {
       expect(json['good_reps'], 3);
       expect(json['average_min_angle_degrees'], closeTo(80.7, 0.0001));
     });
+
+    test('fromJson reconstructs an equivalent summary from toJson output', () {
+      final reps = [
+        const RepRecord(minAngle: 80, status: RepQualityStatus.good),
+        const RepRecord(minAngle: 110, status: RepQualityStatus.tooShallow),
+      ];
+      final original = WorkoutSummary.fromReps('深蹲', reps);
+
+      final roundTripped = WorkoutSummary.fromJson(original.toJson());
+
+      expect(roundTripped.exercise, original.exercise);
+      expect(roundTripped.totalReps, original.totalReps);
+      expect(roundTripped.goodReps, original.goodReps);
+      expect(roundTripped.tooShallowReps, original.tooShallowReps);
+      expect(roundTripped.tooDeepReps, original.tooDeepReps);
+      expect(
+        roundTripped.averageMinAngle,
+        closeTo(original.averageMinAngle, 0.0001),
+      );
+    });
   });
 }

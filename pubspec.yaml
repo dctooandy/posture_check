@@ -41,6 +41,7 @@ dependencies:
   google_mlkit_pose_detection: ^0.14.0
   # Raw HTTP calls to the Claude API (no official Dart/Flutter SDK).
   http: ^1.2.0
+  shared_preferences: ^2.5.5
 
 dev_dependencies:
   flutter_test:

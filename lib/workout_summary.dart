@@ -60,4 +60,13 @@ class WorkoutSummary {
           averageMinAngle.toStringAsFixed(1),
         ),
       };
+
+  factory WorkoutSummary.fromJson(Map<String, dynamic> json) => WorkoutSummary(
+        exercise: json['exercise'] as String,
+        totalReps: json['total_reps'] as int,
+        goodReps: json['good_reps'] as int,
+        tooShallowReps: json['too_shallow_reps'] as int,
+        tooDeepReps: json['too_deep_reps'] as int,
+        averageMinAngle: (json['average_min_angle_degrees'] as num).toDouble(),
+      );
 }
