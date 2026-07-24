@@ -127,7 +127,7 @@ class _PoseCameraScreenState extends State<PoseCameraScreen>
       final camera = _cameras[_cameraIndex];
       final controller = CameraController(
         camera,
-        ResolutionPreset.medium,
+        ResolutionPreset.high,
         enableAudio: false,
         imageFormatGroup:
             Platform.isAndroid ? ImageFormatGroup.nv21 : ImageFormatGroup.bgra8888,
@@ -321,16 +321,29 @@ class _PoseCameraScreenState extends State<PoseCameraScreen>
       body = Stack(
         fit: StackFit.expand,
         children: [
-          CameraPreview(controller),
-          if (_imageSize != null)
-            CustomPaint(
-              painter: PosePainter(
-                poses: _poses,
-                imageSize: _imageSize!,
-                rotation: _imageRotation,
-                cameraLensDirection: _cameras[_cameraIndex].lensDirection,
-              ),
+          // Center gives CameraPreview loose constraints so its internal
+          // AspectRatio can actually letterbox to the camera's real aspect
+          // ratio, instead of being forced to an arbitrary full-screen size
+          // by Stack's tight expand constraints. The skeleton overlay is
+          // passed in as CameraPreview's `child` (not a separate sibling in
+          // this Stack) so it's laid out in that exact same letterboxed
+          // box — otherwise the overlay's canvas size and the video's
+          // visible size disagree and the skeleton drifts off the person.
+          Center(
+            child: CameraPreview(
+              controller,
+              child: _imageSize == null
+                  ? null
+                  : CustomPaint(
+                      painter: PosePainter(
+                        poses: _poses,
+                        imageSize: _imageSize!,
+                        rotation: _imageRotation,
+                        cameraLensDirection: _cameras[_cameraIndex].lensDirection,
+                      ),
+                    ),
             ),
+          ),
           Positioned(
             top: 16,
             left: 16,
