@@ -465,36 +465,89 @@ class _ExercisePicker extends StatelessWidget {
   final ExerciseType selected;
   final ValueChanged<ExerciseType> onSelected;
 
+  // A tap-to-expand list scales to many exercises without permanently
+  // taking up camera-preview space, unlike a horizontally scrolling chip
+  // row (fine for 3 exercises, but discoverability and screen space both
+  // suffer once the list grows past a handful).
+  Future<void> _openPicker(BuildContext context) {
+    final byCategory = <ExerciseCategory, List<ExerciseType>>{};
+    for (final type in ExerciseType.values) {
+      byCategory.putIfAbsent(kExerciseAnalyzers[type]!.category, () => []).add(type);
+    }
+
+    return showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1C1C1E),
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final category in ExerciseCategory.values)
+              if (byCategory[category] case final types?) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  child: Text(
+                    category.displayName,
+                    style: const TextStyle(
+                      color: Colors.white54,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                for (final type in types)
+                  ListTile(
+                    title: Text(
+                      kExerciseAnalyzers[type]!.displayName,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight:
+                            type == selected ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                    trailing: type == selected
+                        ? const Icon(Icons.check, color: Colors.deepPurple)
+                        : null,
+                    onTap: () {
+                      onSelected(type);
+                      Navigator.of(context).pop();
+                    },
+                  ),
+              ],
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: Colors.black54,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        reverse: true,
+    return GestureDetector(
+      onTap: () => _openPicker(context),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(20),
+        ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            for (final type in ExerciseType.values)
-              GestureDetector(
-                onTap: () => onSelected(type),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 150),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: type == selected ? Colors.deepPurple : Colors.transparent,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Text(
-                    kExerciseAnalyzers[type]!.displayName,
-                    style: const TextStyle(color: Colors.white, fontSize: 13),
-                  ),
-                ),
+            Text(
+              kExerciseAnalyzers[selected]!.displayName,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
               ),
+            ),
+            const SizedBox(width: 4),
+            const Icon(Icons.arrow_drop_down, color: Colors.white, size: 20),
           ],
         ),
       ),

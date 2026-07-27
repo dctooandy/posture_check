@@ -2,7 +2,18 @@ import 'dart:math' as math;
 
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
-enum ExerciseType { squat, pushUp, bicepCurl }
+enum ExerciseType { squat, pushUp, bicepCurl, lunge, shoulderPress }
+
+/// Groups exercises for the picker UI. Purely presentational — nothing in
+/// the analysis pipeline depends on it.
+enum ExerciseCategory { lowerBody, upperBody }
+
+extension ExerciseCategoryDisplayName on ExerciseCategory {
+  String get displayName => switch (this) {
+        ExerciseCategory.lowerBody => '下肢',
+        ExerciseCategory.upperBody => '上肢',
+      };
+}
 
 /// Quality of a single completed rep, judged against [ExerciseAnalyzer]'s
 /// good-range thresholds.
@@ -37,6 +48,7 @@ abstract class ExerciseAnalyzer {
 
   ExerciseType get type;
   String get displayName;
+  ExerciseCategory get category;
 
   /// How to position the camera for this exercise. Some exercises need a
   /// front-on view (squat), others need a side-on view (elbow bend isn't
@@ -56,22 +68,40 @@ abstract class ExerciseAnalyzer {
   double get goodRangeMin;
   double get goodRangeMax;
 
+  /// True for exercises whose active/working phase bends the joint to a
+  /// SMALLER angle than rest (squat, push-up, bicep curl: rest is limb
+  /// extended, the rep works toward flexion). False for exercises whose
+  /// working phase is a LARGER angle than rest (shoulder press: rest is the
+  /// racked/bent position, the rep works toward extension). Every threshold
+  /// comparison in [classify], [ExerciseFeedbackEngine.classify], and
+  /// [RepCounter] is mirrored based on this flag.
+  bool get contractsToSmallAngle => true;
+
   /// The joint angle driving this exercise's analysis, or null if the
   /// required landmarks aren't confidently visible in [pose].
   double? primaryAngle(Pose pose);
 
-  RepQualityStatus classify(double minAngle) {
-    if (minAngle > goodRangeMax) return RepQualityStatus.tooShallow;
-    if (minAngle >= goodRangeMin) return RepQualityStatus.good;
-    return RepQualityStatus.tooDeep;
+  /// Classifies the most extreme angle reached during a rep — the smallest
+  /// angle for a flexion-pattern exercise, the largest for an
+  /// extension-pattern one (see [contractsToSmallAngle]).
+  RepQualityStatus classify(double extremeAngle) {
+    if (contractsToSmallAngle) {
+      if (extremeAngle > goodRangeMax) return RepQualityStatus.tooShallow;
+      if (extremeAngle >= goodRangeMin) return RepQualityStatus.good;
+      return RepQualityStatus.tooDeep;
+    } else {
+      if (extremeAngle < goodRangeMin) return RepQualityStatus.tooShallow;
+      if (extremeAngle <= goodRangeMax) return RepQualityStatus.good;
+      return RepQualityStatus.tooDeep;
+    }
   }
 
   static const minLandmarkLikelihood = 0.5;
 
-  /// Averages the vertex angle across however many of [sides] have all
-  /// three landmarks visible (e.g. both left and right knee), so a single
+  /// Angles from however many of [sides] have all three landmarks
+  /// confidently visible (e.g. both left and right knee) — a single
   /// occluded side doesn't zero out the whole reading.
-  static double? averageAngleAcrossSides(
+  static List<double> _visibleAngles(
     Pose pose,
     List<(PoseLandmarkType, PoseLandmarkType, PoseLandmarkType)> sides,
   ) {
@@ -88,8 +118,32 @@ abstract class ExerciseAnalyzer {
       }
       angles.add(_angleAtVertex(pa, pv, pc));
     }
+    return angles;
+  }
+
+  /// Averages the vertex angle across [sides] — for exercises where both
+  /// limbs move together (e.g. a two-legged squat), so a single occluded
+  /// side doesn't zero out the whole reading.
+  static double? averageAngleAcrossSides(
+    Pose pose,
+    List<(PoseLandmarkType, PoseLandmarkType, PoseLandmarkType)> sides,
+  ) {
+    final angles = _visibleAngles(pose, sides);
     if (angles.isEmpty) return null;
     return angles.reduce((x, y) => x + y) / angles.length;
+  }
+
+  /// The smallest vertex angle across [sides] — for exercises where only one
+  /// side is meaningfully bent at a time (e.g. the front leg in a lunge),
+  /// so averaging with the other, mostly-extended side wouldn't reflect the
+  /// actual depth reached.
+  static double? minAngleAcrossSides(
+    Pose pose,
+    List<(PoseLandmarkType, PoseLandmarkType, PoseLandmarkType)> sides,
+  ) {
+    final angles = _visibleAngles(pose, sides);
+    if (angles.isEmpty) return null;
+    return angles.reduce(math.min);
   }
 
   /// Angle at [vertex] formed by rays toward [a] and [c], in degrees.
@@ -110,6 +164,8 @@ class SquatAnalyzer extends ExerciseAnalyzer {
   ExerciseType get type => ExerciseType.squat;
   @override
   String get displayName => '深蹲';
+  @override
+  ExerciseCategory get category => ExerciseCategory.lowerBody;
   @override
   String get cameraGuidance => '請將手機正面對著你,確保全身(頭到腳)都在畫面裡。';
   @override
@@ -149,6 +205,8 @@ class PushUpAnalyzer extends ExerciseAnalyzer {
   ExerciseType get type => ExerciseType.pushUp;
   @override
   String get displayName => '伏地挺身';
+  @override
+  ExerciseCategory get category => ExerciseCategory.upperBody;
   @override
   String get cameraGuidance => '請將手機立在身體「側邊」、與腰部同高,手肘彎曲角度側面拍才準。';
   @override
@@ -195,6 +253,8 @@ class BicepCurlAnalyzer extends ExerciseAnalyzer {
   @override
   String get displayName => '啞鈴彎舉';
   @override
+  ExerciseCategory get category => ExerciseCategory.upperBody;
+  @override
   String get cameraGuidance => '請將手機立在身體「側邊」、與腰部同高,手肘彎曲角度側面拍才準。';
   @override
   double get restThreshold => 150;
@@ -224,10 +284,101 @@ class BicepCurlAnalyzer extends ExerciseAnalyzer {
   }
 }
 
+/// Lunge depth judged by the front leg's hip-knee-ankle angle. Only one leg
+/// bends deeply at a time (the other stays closer to extended), so unlike
+/// [SquatAnalyzer] this takes the smaller of the two knee angles rather than
+/// averaging them — averaging would blend the bent front knee with the
+/// nearly-straight back one and understate how deep the lunge actually went.
+class LungeAnalyzer extends ExerciseAnalyzer {
+  const LungeAnalyzer();
+
+  @override
+  ExerciseType get type => ExerciseType.lunge;
+  @override
+  String get displayName => '弓箭步';
+  @override
+  ExerciseCategory get category => ExerciseCategory.lowerBody;
+  @override
+  String get cameraGuidance => '請將手機正面對著你,確保全身(頭到腳)都在畫面裡。';
+  @override
+  double get restThreshold => 160;
+  @override
+  double get downThreshold => 115;
+  @override
+  double get upThreshold => 150;
+  @override
+  double get goodRangeMin => 70;
+  @override
+  double get goodRangeMax => 100;
+
+  @override
+  double? primaryAngle(Pose pose) {
+    return ExerciseAnalyzer.minAngleAcrossSides(pose, const [
+      (PoseLandmarkType.leftHip, PoseLandmarkType.leftKnee, PoseLandmarkType.leftAnkle),
+      (
+        PoseLandmarkType.rightHip,
+        PoseLandmarkType.rightKnee,
+        PoseLandmarkType.rightAnkle
+      ),
+    ]);
+  }
+}
+
+/// Shoulder press range judged by the shoulder-elbow-wrist angle. Unlike
+/// [SquatAnalyzer]/[PushUpAnalyzer]/[BicepCurlAnalyzer], the rest position
+/// between reps (weight racked at shoulder height) is the BENT end of the
+/// range and the working phase presses toward full extension overhead, so
+/// [contractsToSmallAngle] is false — see that flag's doc for how this
+/// flips every threshold comparison. Because the arm travels mostly in the
+/// frontal plane (out to the sides of the body, not front-to-back like a
+/// push-up), the elbow bend is readable from a front-on camera.
+class ShoulderPressAnalyzer extends ExerciseAnalyzer {
+  const ShoulderPressAnalyzer();
+
+  @override
+  ExerciseType get type => ExerciseType.shoulderPress;
+  @override
+  String get displayName => '肩推';
+  @override
+  ExerciseCategory get category => ExerciseCategory.upperBody;
+  @override
+  String get cameraGuidance => '請將手機正面對著你,確保上半身跟手臂都在畫面裡。';
+  @override
+  bool get contractsToSmallAngle => false;
+  @override
+  double get restThreshold => 100;
+  @override
+  double get downThreshold => 140;
+  @override
+  double get upThreshold => 110;
+  @override
+  double get goodRangeMin => 160;
+  @override
+  double get goodRangeMax => 180;
+
+  @override
+  double? primaryAngle(Pose pose) {
+    return ExerciseAnalyzer.averageAngleAcrossSides(pose, const [
+      (
+        PoseLandmarkType.leftShoulder,
+        PoseLandmarkType.leftElbow,
+        PoseLandmarkType.leftWrist
+      ),
+      (
+        PoseLandmarkType.rightShoulder,
+        PoseLandmarkType.rightElbow,
+        PoseLandmarkType.rightWrist
+      ),
+    ]);
+  }
+}
+
 const kExerciseAnalyzers = <ExerciseType, ExerciseAnalyzer>{
   ExerciseType.squat: SquatAnalyzer(),
   ExerciseType.pushUp: PushUpAnalyzer(),
   ExerciseType.bicepCurl: BicepCurlAnalyzer(),
+  ExerciseType.lunge: LungeAnalyzer(),
+  ExerciseType.shoulderPress: ShoulderPressAnalyzer(),
 };
 
 /// Turns the live pose stream into real-time feedback for whichever
@@ -246,14 +397,26 @@ class ExerciseFeedbackEngine {
     }
 
     final LiveFeedbackStatus status;
-    if (angle >= analyzer.restThreshold) {
-      status = LiveFeedbackStatus.resting;
-    } else if (angle > analyzer.goodRangeMax) {
-      status = LiveFeedbackStatus.tooShallow;
-    } else if (angle >= analyzer.goodRangeMin) {
-      status = LiveFeedbackStatus.good;
+    if (analyzer.contractsToSmallAngle) {
+      if (angle >= analyzer.restThreshold) {
+        status = LiveFeedbackStatus.resting;
+      } else if (angle > analyzer.goodRangeMax) {
+        status = LiveFeedbackStatus.tooShallow;
+      } else if (angle >= analyzer.goodRangeMin) {
+        status = LiveFeedbackStatus.good;
+      } else {
+        status = LiveFeedbackStatus.tooDeep;
+      }
     } else {
-      status = LiveFeedbackStatus.tooDeep;
+      if (angle <= analyzer.restThreshold) {
+        status = LiveFeedbackStatus.resting;
+      } else if (angle < analyzer.goodRangeMin) {
+        status = LiveFeedbackStatus.tooShallow;
+      } else if (angle <= analyzer.goodRangeMax) {
+        status = LiveFeedbackStatus.good;
+      } else {
+        status = LiveFeedbackStatus.tooDeep;
+      }
     }
 
     return ExerciseFeedback(status: status, angle: angle);
@@ -320,7 +483,11 @@ class RepCounter {
 
   final List<RepRecord> completedReps = [];
   bool _isDown = false;
-  double? _minAngleThisRep;
+  // The most extreme angle reached during the in-progress rep: the smallest
+  // for a flexion-pattern exercise, the largest for an extension-pattern one
+  // (see ExerciseAnalyzer.contractsToSmallAngle). RepRecord.minAngle keeps
+  // its name regardless — it's the value that drives classify() either way.
+  double? _extremeAngleThisRep;
   int _pendingFrames = 0;
 
   int get reps => completedReps.length;
@@ -331,12 +498,16 @@ class RepCounter {
       return;
     }
 
+    final small = analyzer.contractsToSmallAngle;
+
     if (!_isDown) {
-      if (angle <= analyzer.downThreshold) {
+      final enteredWorkingPhase =
+          small ? angle <= analyzer.downThreshold : angle >= analyzer.downThreshold;
+      if (enteredWorkingPhase) {
         _pendingFrames++;
         if (_pendingFrames >= requiredConsecutiveFrames) {
           _isDown = true;
-          _minAngleThisRep = angle;
+          _extremeAngleThisRep = angle;
           _pendingFrames = 0;
         }
       } else {
@@ -345,18 +516,23 @@ class RepCounter {
       return;
     }
 
-    final minSoFar = _minAngleThisRep;
-    if (minSoFar == null || angle < minSoFar) {
-      _minAngleThisRep = angle;
+    final extremeSoFar = _extremeAngleThisRep;
+    final isMoreExtreme = extremeSoFar == null ||
+        (small ? angle < extremeSoFar : angle > extremeSoFar);
+    if (isMoreExtreme) {
+      _extremeAngleThisRep = angle;
     }
 
-    if (angle >= analyzer.upThreshold) {
+    final backNearRest =
+        small ? angle >= analyzer.upThreshold : angle <= analyzer.upThreshold;
+    if (backNearRest) {
       _pendingFrames++;
       if (_pendingFrames >= requiredConsecutiveFrames) {
-        final min = _minAngleThisRep!;
-        completedReps.add(RepRecord(minAngle: min, status: analyzer.classify(min)));
+        final extreme = _extremeAngleThisRep!;
+        completedReps
+            .add(RepRecord(minAngle: extreme, status: analyzer.classify(extreme)));
         _isDown = false;
-        _minAngleThisRep = null;
+        _extremeAngleThisRep = null;
         _pendingFrames = 0;
       }
     } else {
@@ -367,7 +543,7 @@ class RepCounter {
   void reset() {
     completedReps.clear();
     _isDown = false;
-    _minAngleThisRep = null;
+    _extremeAngleThisRep = null;
     _pendingFrames = 0;
   }
 }

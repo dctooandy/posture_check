@@ -151,6 +151,110 @@ void main() {
     });
   });
 
+  group('LungeAnalyzer.classify', () {
+    const analyzer = LungeAnalyzer();
+
+    test('angle above goodRangeMax is tooShallow', () {
+      expect(analyzer.classify(101), RepQualityStatus.tooShallow);
+    });
+
+    test('angle within good range is good', () {
+      expect(analyzer.classify(85), RepQualityStatus.good);
+    });
+
+    test('angle below goodRangeMin is tooDeep', () {
+      expect(analyzer.classify(60), RepQualityStatus.tooDeep);
+    });
+  });
+
+  group('LungeAnalyzer.primaryAngle', () {
+    const analyzer = LungeAnalyzer();
+
+    test('takes the more-bent leg rather than averaging both', () {
+      final pose = Pose(landmarks: {
+        // Front leg: bent to 90 degrees.
+        PoseLandmarkType.leftHip: _landmark(PoseLandmarkType.leftHip, 1, 0),
+        PoseLandmarkType.leftKnee: _landmark(PoseLandmarkType.leftKnee, 0, 0),
+        PoseLandmarkType.leftAnkle: _landmark(PoseLandmarkType.leftAnkle, 0, 1),
+        // Back leg: nearly straight, 180 degrees.
+        PoseLandmarkType.rightHip: _landmark(PoseLandmarkType.rightHip, 1, 0),
+        PoseLandmarkType.rightKnee: _landmark(PoseLandmarkType.rightKnee, 0, 0),
+        PoseLandmarkType.rightAnkle: _landmark(PoseLandmarkType.rightAnkle, -1, 0),
+      });
+
+      expect(analyzer.primaryAngle(pose), closeTo(90, 0.001));
+    });
+  });
+
+  group('ShoulderPressAnalyzer.classify (extension pattern)', () {
+    const analyzer = ShoulderPressAnalyzer();
+
+    test('angle below goodRangeMin is tooShallow (did not fully extend)', () {
+      expect(analyzer.classify(150), RepQualityStatus.tooShallow);
+    });
+
+    test('angle within good range is good', () {
+      expect(analyzer.classify(170), RepQualityStatus.good);
+    });
+  });
+
+  group('ExerciseFeedbackEngine.classify', () {
+    test('null angle is noPoseDetected', () {
+      final feedback = ExerciseFeedbackEngine.classify(null, const SquatAnalyzer());
+      expect(feedback.status, LiveFeedbackStatus.noPoseDetected);
+    });
+
+    group('flexion-pattern exercise (contractsToSmallAngle true)', () {
+      const analyzer = SquatAnalyzer();
+
+      test('angle at/above restThreshold is resting', () {
+        expect(
+          ExerciseFeedbackEngine.classify(160, analyzer).status,
+          LiveFeedbackStatus.resting,
+        );
+      });
+
+      test('angle within good range is good', () {
+        expect(
+          ExerciseFeedbackEngine.classify(90, analyzer).status,
+          LiveFeedbackStatus.good,
+        );
+      });
+
+      test('angle below goodRangeMin is tooDeep', () {
+        expect(
+          ExerciseFeedbackEngine.classify(60, analyzer).status,
+          LiveFeedbackStatus.tooDeep,
+        );
+      });
+    });
+
+    group('extension-pattern exercise (contractsToSmallAngle false)', () {
+      const analyzer = ShoulderPressAnalyzer();
+
+      test('angle at/below restThreshold is resting', () {
+        expect(
+          ExerciseFeedbackEngine.classify(90, analyzer).status,
+          LiveFeedbackStatus.resting,
+        );
+      });
+
+      test('angle within good range is good', () {
+        expect(
+          ExerciseFeedbackEngine.classify(170, analyzer).status,
+          LiveFeedbackStatus.good,
+        );
+      });
+
+      test('angle below goodRangeMin (but above rest) is tooShallow', () {
+        expect(
+          ExerciseFeedbackEngine.classify(130, analyzer).status,
+          LiveFeedbackStatus.tooShallow,
+        );
+      });
+    });
+  });
+
   group('kExerciseAnalyzers', () {
     test('has an analyzer registered for every ExerciseType', () {
       for (final type in ExerciseType.values) {

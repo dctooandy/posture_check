@@ -101,4 +101,54 @@ void main() {
       expect(counter.reps, 1);
     });
   });
+
+  group('RepCounter with an extension-pattern analyzer (contractsToSmallAngle false)', () {
+    // restThreshold=100, downThreshold=140, upThreshold=110,
+    // goodRangeMin=160, goodRangeMax=180.
+    const analyzer = ShoulderPressAnalyzer();
+
+    test('counts one rep after a full press-then-lower cycle', () {
+      final counter = RepCounter(analyzer, requiredConsecutiveFrames: 3);
+
+      for (final angle in <double>[90.0, 145, 145, 145, 170, 100, 100, 100]) {
+        counter.update(angle);
+      }
+
+      expect(counter.reps, 1);
+      expect(counter.completedReps.single.minAngle, 170);
+      expect(counter.completedReps.single.status, RepQualityStatus.good);
+    });
+
+    test('records the highest angle reached during the rep, not the last one', () {
+      final counter = RepCounter(analyzer, requiredConsecutiveFrames: 3);
+
+      for (final angle in <double>[90.0, 145, 145, 145, 175, 160, 100, 100, 100]) {
+        counter.update(angle);
+      }
+
+      expect(counter.reps, 1);
+      expect(counter.completedReps.single.minAngle, 175);
+    });
+
+    test('classifies a rep that never fully extends as tooShallow', () {
+      final counter = RepCounter(analyzer, requiredConsecutiveFrames: 3);
+
+      for (final angle in <double>[90.0, 145, 145, 145, 150, 100, 100, 100]) {
+        counter.update(angle);
+      }
+
+      expect(counter.reps, 1);
+      expect(counter.completedReps.single.status, RepQualityStatus.tooShallow);
+    });
+
+    test('fluctuating above the up threshold never completes a rep', () {
+      final counter = RepCounter(analyzer, requiredConsecutiveFrames: 3);
+
+      for (final angle in <double>[145.0, 145, 145, 170, 150, 165, 155, 160]) {
+        counter.update(angle);
+      }
+
+      expect(counter.reps, 0);
+    });
+  });
 }
