@@ -1,17 +1,75 @@
-# posture_check
+# PostureCheck
 
-A new Flutter project.
+一款 Flutter 健身動作校正 App：透過手機鏡頭即時偵測姿勢，判斷動作幅度是否正確、自動計算次數，並在訓練結束後由 Claude 產生個人化教練建議。
 
-## Getting Started
+## 功能特色
 
-This project is a starting point for a Flutter application.
+- **即時姿勢偵測與骨架疊圖**：使用 Google ML Kit Pose Detection,在鏡頭畫面上即時疊出關節骨架
+- **5 種健身動作,依部位分類**
+  - 下肢：深蹲、弓箭步
+  - 上肢：伏地挺身、啞鈴彎舉、肩推
+- **動作專屬鏡頭擺放提示**：不同動作需要不同鏡頭角度(例如深蹲要正面、伏地挺身要側面才能準確判斷手肘角度),選擇動作時會自動顯示提示
+- **即時回饋**：幅度不夠 / 足夠 / 過深,並針對偵測雜訊做平滑處理與防抖,避免畫面閃爍或誤判
+- **自動計數**：具備 hysteresis 與連續影格防抖機制,避免雜訊造成重複計數
+- **AI 教練建議**：訓練結束後由 Claude API(預設 Haiku 4.5)根據本次統計數據產生繁體中文教練建議;未設定 API 金鑰時自動改用離線模擬建議,不影響其他功能
+- **訓練歷史記錄**：本地儲存每次訓練的統計數據與當時的教練建議文案,可隨時回顧查看
+- **鏡頭切換**：僅保留前鏡頭與後置廣角鏡頭兩種選項,避免多鏡頭裝置選項過多造成混亂
 
-A few resources to get you started if this is your first Flutter project:
+## 技術架構
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+```
+相機影格 → ML Kit 骨架偵測 → ExerciseAnalyzer(單一關節角度)
+        → AngleSmoother(EMA 平滑,容忍短暫遺失)
+        → ExerciseFeedbackEngine(即時回饋分類)
+        → RepCounter(雙門檻 + 連續影格防抖計數)
+        → WorkoutSummary → ClaudeCoachingService(教練建議)
+        → WorkoutHistoryService(本地持久化)
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+新增一個動作只需要繼承 `ExerciseAnalyzer` 寫一個新的子類別(選定 3 個關節點算出角度、設定幾個角度門檻),不需要改動計數、回饋、摘要或歷史紀錄等其他任何管線邏輯。
+
+多數動作是「屈曲型」(休息時肢體伸直、出力時彎曲,例如深蹲、伏地挺身、彎舉),但肩推是「伸展型」(休息時手肘彎曲於架式、出力時伸直過頭),`ExerciseAnalyzer.contractsToSmallAngle` 這個旗標讓計數與分類邏輯能同時支援兩種方向。
+
+## 平台限制
+
+- **iOS**：只能在實機測試。ML Kit Pose Detection 相關的 pod 不支援 Apple Silicon 模擬器的 arm64 架構,無法在模擬器上建置。
+- **Android**：模擬器可以啟動 App,但虛擬鏡頭畫面無法產生真實的人體骨架資料,姿勢偵測、計數、教練建議等核心功能仍需要實機測試。
+
+## 開始使用
+
+```bash
+flutter pub get
+flutter run
+```
+
+### 啟用 Claude API(選用)
+
+不提供金鑰時會自動使用離線模擬建議,不影響其他功能：
+
+```bash
+flutter run --dart-define=ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### 執行測試
+
+```bash
+flutter test
+```
+
+目前有 58 個單元測試,涵蓋關節角度計算、計數器的防抖/方向反轉邏輯、角度平滑處理、訓練摘要序列化,以及歷史紀錄的存取。
+
+## 開發歷程
+
+1. **POC 骨架**：相機預覽 + ML Kit 骨架疊圖 + 深蹲規則引擎 + 次數計數 + 模擬教練建議
+2. **多動作擴充**：加入伏地挺身、啞鈴彎舉,重構出共用的角度分析架構,並補上全面的單元測試——測試過程中發現並修正一個門檻值設定錯誤(深蹲/伏地挺身的 `downThreshold` 誤設為與 `goodRangeMax` 相同,導致「幅度不足」的分類永遠不會被觸發)
+3. **防抖與平滑優化**：解決偵測雜訊造成的重複計數與即時回饋畫面閃爍問題
+4. **UI 優化與鏡頭選擇邏輯**：合併多鏡頭裝置的鏡頭清單(只留前鏡頭+後置廣角)、加入動作專屬的鏡頭擺放提示
+5. **整合 Claude API**：改用 Claude Haiku 4.5 產生真人語氣的訓練建議,支援 API 金鑰缺席時自動退回離線模擬建議
+6. **骨架對齊修正**：解決 iOS/Android 上骨架疊圖與畫面中人物對不齊的問題,座標轉換公式依旋轉角度與平台分別處理
+7. **訓練歷史記錄**：本地儲存每次訓練的統計數據與當時產生的教練建議文案,可回顧查看
+8. **新增弓箭步與肩推,動作選單改版**：肩推是第一個「伸展型」動作,因此將計數與分類邏輯泛化為方向感知(`contractsToSmallAngle`),讓架構同時支援屈曲型與伸展型動作;動作選單也從容易被擠爆的橫向捲動列表,改為依部位分類的彈出式清單
+
+## 尚未實作(已記錄、待評估)
+
+- **動作選單改為分類分頁**：目前是單一清單搭配分類標題,等某個部位的動作數量明顯變多(6-8 個以上)時,再評估改成「先選類別、再選動作」的分頁式介面
+- **自動判斷使用者正在做哪個動作**：技術上可行(用簡單的啟發式規則,而非訓練 ML 模型),但無法完全免除手動選擇,因為不同動作仍需要不同的鏡頭擺放角度;列為獨立專案評估,不隨動作新增而順便做
