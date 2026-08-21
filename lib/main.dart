@@ -396,48 +396,40 @@ class _PoseCameraScreenState extends State<PoseCameraScreen>
             right: 16,
             child: Column(
               children: [
-                FloatingActionButton(
-                  heroTag: 'camera_guidance',
-                  tooltip: '鏡頭擺放提示',
-                  backgroundColor: Colors.black54,
+                _LabeledActionButton(
+                  icon: Icons.info_outline,
+                  label: '鏡頭提示',
                   onPressed: _showCameraGuidance,
-                  child: const Icon(Icons.info_outline),
                 ),
-                const SizedBox(height: 12),
-                FloatingActionButton(
-                  heroTag: 'switch_camera',
-                  tooltip: '切換鏡頭',
+                const SizedBox(height: 10),
+                _LabeledActionButton(
+                  icon: Icons.cameraswitch,
+                  label: '切換鏡頭',
                   onPressed: _cameras.length > 1 ? _switchCamera : null,
-                  child: const Icon(Icons.cameraswitch),
                 ),
-                const SizedBox(height: 12),
-                FloatingActionButton(
-                  heroTag: 'reset_reps',
-                  tooltip: '重設次數',
-                  backgroundColor: Colors.black54,
+                const SizedBox(height: 10),
+                _LabeledActionButton(
+                  icon: Icons.refresh,
+                  label: '重設次數',
                   onPressed: () => setState(_repCounter.reset),
-                  child: const Icon(Icons.refresh),
                 ),
-                const SizedBox(height: 12),
-                FloatingActionButton(
-                  heroTag: 'workout_summary',
-                  tooltip: '產生訓練建議',
+                const SizedBox(height: 10),
+                _LabeledActionButton(
+                  icon: Icons.assessment,
+                  label: '訓練建議',
                   backgroundColor: Colors.deepPurple,
                   onPressed: _repCounter.reps > 0 ? _showWorkoutSummary : null,
-                  child: const Icon(Icons.assessment),
                 ),
-                const SizedBox(height: 12),
-                FloatingActionButton(
-                  heroTag: 'workout_history',
-                  tooltip: '訓練歷史',
-                  backgroundColor: Colors.black54,
+                const SizedBox(height: 10),
+                _LabeledActionButton(
+                  icon: Icons.history,
+                  label: '訓練歷史',
                   onPressed: () => Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) =>
                           WorkoutHistoryScreen(historyService: _historyService),
                     ),
                   ),
-                  child: const Icon(Icons.history),
                 ),
               ],
             ),
@@ -549,6 +541,60 @@ class _ExercisePicker extends StatelessWidget {
             const SizedBox(width: 4),
             const Icon(Icons.arrow_drop_down, color: Colors.white, size: 20),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A compact icon + short-label button for the right-side action column.
+/// Kept as a single 56-wide rounded rect (icon on top, tiny caption below)
+/// instead of stacking a separate [Text] under a full-size
+/// [FloatingActionButton], so adding labels doesn't add much more height
+/// per button than the icon-only version did.
+class _LabeledActionButton extends StatelessWidget {
+  const _LabeledActionButton({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+    this.backgroundColor = Colors.black54,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
+  final Color backgroundColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onPressed != null;
+    return Opacity(
+      opacity: enabled ? 1 : 0.4,
+      child: SizedBox(
+        width: 56,
+        child: Material(
+          color: backgroundColor,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: onPressed,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, color: Colors.white, size: 22),
+                  const SizedBox(height: 3),
+                  Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white, fontSize: 10),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );
